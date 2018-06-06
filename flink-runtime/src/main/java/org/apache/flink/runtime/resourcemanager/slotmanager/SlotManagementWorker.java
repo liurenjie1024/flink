@@ -39,12 +39,10 @@ import org.apache.flink.runtime.taskexecutor.exceptions.SlotAllocationException;
 import org.apache.flink.runtime.taskexecutor.exceptions.SlotOccupiedException;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.Preconditions;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -59,8 +57,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * The slot manager is responsible for maintaining a view on all registered task manager slots,
- * their allocation and all pending slot requests. Whenever a new slot is registered or and
+ * The slot manager worker is responsible for maintaining a view on all registered task manager
+ * slots, their allocation and all pending slot requests. Whenever a new slot is registered or and
  * allocated slot is freed, then it tries to fulfill another pending slot request. Whenever there
  * are not enough slots available the slot manager will notify the resource manager about it via
  * {@link ResourceActions#allocateResource(ResourceProfile)}.
@@ -69,20 +67,16 @@ import java.util.concurrent.TimeoutException;
  * slots are currently not used) and pending slot requests time out triggering their release and
  * failure, respectively.
  */
-public class SlotManager implements AutoCloseable {
-	private static final Logger LOG = LoggerFactory.getLogger(SlotManager.class);
+class SlotManagementWorker implements AutoCloseable {
+	private static final Logger LOG = LoggerFactory.getLogger(SlotManagementWorker.class);
 
-	/** Scheduled executor for timeouts. */
-	private final ScheduledExecutor scheduledExecutor;
+	private final Time taskManagerTimeout;
 
 	/** Timeout for slot requests to the task manager. */
 	private final Time taskManagerRequestTimeout;
 
 	/** Timeout after which an allocation is discarded. */
 	private final Time slotRequestTimeout;
-
-	/** Timeout after which an unused TaskManager is released. */
-	private final Time taskManagerTimeout;
 
 	/** Map for all registered slots. */
 	private final HashMap<SlotID, TaskManagerSlot> slots;
@@ -108,33 +102,16 @@ public class SlotManager implements AutoCloseable {
 	/** Callbacks for resource (de-)allocations. */
 	private ResourceActions resourceActions;
 
-	private ScheduledFuture<?> taskManagerTimeoutCheck;
-
-	private ScheduledFuture<?> slotRequestTimeoutCheck;
-
-	/** True iff the component has been started. */
 	private boolean started;
 
-	public SlotManager(
-			ScheduledExecutor scheduledExecutor,
-			Time taskManagerRequestTimeout,
-			Time slotRequestTimeout,
-			Time taskManagerTimeout) {
-		this(scheduledExecutor, taskManagerRequestTimeout, slotRequestTimeout,
-			taskManagerTimeout, false);
-	}
-
-	public SlotManager(
-		ScheduledExecutor scheduledExecutor,
-		Time taskManagerRequestTimeout,
-		Time slotRequestTimeout,
+	public SlotManagementWorker(
 		Time taskManagerTimeout,
-		boolean enableJobIsolation) {
+		Time taskManagerRequestTimeout,
+		Time slotRequestTimeout) {
 
-		this.scheduledExecutor = Preconditions.checkNotNull(scheduledExecutor);
+		this.taskManagerTimeout = taskManagerTimeout;
 		this.taskManagerRequestTimeout = Preconditions.checkNotNull(taskManagerRequestTimeout);
 		this.slotRequestTimeout = Preconditions.checkNotNull(slotRequestTimeout);
-		this.taskManagerTimeout = Preconditions.checkNotNull(taskManagerTimeout);
 
 		slots = new HashMap<>(16);
 		freeSlots = new LinkedHashMap<>(16);
@@ -145,8 +122,6 @@ public class SlotManager implements AutoCloseable {
 		resourceManagerId = null;
 		resourceActions = null;
 		mainThreadExecutor = null;
-		taskManagerTimeoutCheck = null;
-		slotRequestTimeoutCheck = null;
 
 		started = false;
 	}
@@ -200,20 +175,6 @@ public class SlotManager implements AutoCloseable {
 		resourceActions = Preconditions.checkNotNull(newResourceActions);
 
 		started = true;
-
-		taskManagerTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
-			() -> mainThreadExecutor.execute(
-				() -> checkTaskManagerTimeouts()),
-			0L,
-			taskManagerTimeout.toMilliseconds(),
-			TimeUnit.MILLISECONDS);
-
-		slotRequestTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
-			() -> mainThreadExecutor.execute(
-				() -> checkSlotRequestTimeouts()),
-			0L,
-			slotRequestTimeout.toMilliseconds(),
-			TimeUnit.MILLISECONDS);
 	}
 
 	/**
@@ -221,17 +182,6 @@ public class SlotManager implements AutoCloseable {
 	 */
 	public void suspend() {
 		LOG.info("Suspending the SlotManager.");
-
-		// stop the timeout checks for the TaskManagers and the SlotRequests
-		if (taskManagerTimeoutCheck != null) {
-			taskManagerTimeoutCheck.cancel(false);
-			taskManagerTimeoutCheck = null;
-		}
-
-		if (slotRequestTimeoutCheck != null) {
-			slotRequestTimeoutCheck.cancel(false);
-			slotRequestTimeoutCheck = null;
-		}
 
 		for (PendingSlotRequest pendingSlotRequest : pendingSlotRequests.values()) {
 			cancelPendingSlotRequest(pendingSlotRequest);
@@ -361,7 +311,6 @@ public class SlotManager implements AutoCloseable {
 					taskExecutorConnection);
 			}
 		}
-
 	}
 
 	/**
