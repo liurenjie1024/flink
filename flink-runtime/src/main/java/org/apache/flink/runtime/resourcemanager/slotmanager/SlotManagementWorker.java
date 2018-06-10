@@ -839,7 +839,7 @@ class SlotManagementWorker implements AutoCloseable {
 	// Internal timeout methods
 	// ---------------------------------------------------------------------------------------------
 
-	private void checkTaskManagerTimeouts() {
+	void checkTaskManagerTimeouts() {
 		if (!taskManagerRegistrations.isEmpty()) {
 			long currentTime = System.currentTimeMillis();
 
@@ -862,7 +862,7 @@ class SlotManagementWorker implements AutoCloseable {
 		}
 	}
 
-	private void checkSlotRequestTimeouts() {
+	void checkSlotRequestTimeouts() {
 		if (!pendingSlotRequests.isEmpty()) {
 			long currentTime = System.currentTimeMillis();
 

@@ -1,8 +1,14 @@
 package org.apache.flink.runtime.resourcemanager.slotmanager;
 
+import org.apache.flink.runtime.clusterframework.types.AllocationID;
+import org.apache.flink.runtime.clusterframework.types.SlotID;
 import org.apache.flink.runtime.instance.InstanceID;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.resourcemanager.SlotRequest;
+import org.apache.flink.runtime.resourcemanager.registration.TaskExecutorConnection;
+import org.apache.flink.runtime.taskexecutor.SlotReport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.Executor;
 
@@ -15,7 +21,7 @@ import java.util.concurrent.Executor;
  */
 interface SlotManagerStrategy {
 	int getNumberRegisteredSlots();
-	int getNumberRegisteredSlotsOf();
+	int getNumberRegisteredSlotsOf(InstanceID instanceID);
 
 	int getNumberFreeSlots();
 	int getNumberFreeSlotsOf(InstanceID instanceID);
@@ -30,4 +36,12 @@ interface SlotManagerStrategy {
 	}
 
 	boolean registerSlotRequest(SlotRequest slotRequest) throws SlotManagerException;
+	boolean unregisterSlotRequest(AllocationID allocationId);
+
+	void registerTaskManager(final TaskExecutorConnection taskExecutorConnection,
+							 SlotReport initialSlotReport);
+	boolean unregisterTaskManager(InstanceID instanceId);
+
+	boolean reportSlotStatus(InstanceID instanceId, SlotReport slotReport);
+	void freeSlot(SlotID slotId, AllocationID allocationId);
 }
