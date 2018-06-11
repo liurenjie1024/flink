@@ -42,7 +42,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -435,7 +441,7 @@ class SlotManagementWorker implements AutoCloseable {
 	protected TaskManagerSlot findMatchingSlot(
 		JobID jobID,
 		ResourceProfile requestResourceProfile) {
-		Iterator<Map.Entry<SlotID, TaskManagerSlot>> iterator = freeSlots.entrySet().iterator();
+		Iterator<Entry<SlotID, TaskManagerSlot>> iterator = freeSlots.entrySet().iterator();
 
 		while (iterator.hasNext()) {
 			TaskManagerSlot taskManagerSlot = iterator.next().getValue();
