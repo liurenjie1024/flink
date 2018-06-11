@@ -99,7 +99,7 @@ public class SimpleSlotManagerStrategy implements SlotManagerStrategy {
 	@Override
 	public void start(ResourceManagerId newResourceManagerId, Executor newMainThreadExecutor, ResourceActions newResourceActions) {
 		LOG.info("Starting the SlotManager.");
-
+		this.mainThreadExecutor = newMainThreadExecutor;
 
 		taskManagerTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
 			() -> mainThreadExecutor.execute(

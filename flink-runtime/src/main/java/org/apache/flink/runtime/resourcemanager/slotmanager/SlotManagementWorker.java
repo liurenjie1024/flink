@@ -107,7 +107,7 @@ class SlotManagementWorker implements AutoCloseable {
 		Time taskManagerRequestTimeout,
 		Time slotRequestTimeout) {
 
-		this.taskManagerTimeout = taskManagerTimeout;
+		this.taskManagerTimeout = Preconditions.checkNotNull(taskManagerTimeout);
 		this.taskManagerRequestTimeout = Preconditions.checkNotNull(taskManagerRequestTimeout);
 		this.slotRequestTimeout = Preconditions.checkNotNull(slotRequestTimeout);
 
