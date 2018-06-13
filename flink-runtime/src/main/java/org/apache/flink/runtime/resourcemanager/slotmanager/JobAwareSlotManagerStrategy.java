@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 
-
 package org.apache.flink.runtime.resourcemanager.slotmanager;
 
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.clusterframework.types.SlotID;
@@ -28,18 +28,21 @@ import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.resourcemanager.SlotRequest;
 import org.apache.flink.runtime.resourcemanager.registration.TaskExecutorConnection;
 import org.apache.flink.runtime.taskexecutor.SlotReport;
-import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
-public class SimpleSlotManagerStrategy implements SlotManagerStrategy {
-	private static final Logger LOG = LoggerFactory.getLogger(SimpleSlotManagerStrategy.class);
+public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
+	private static final Logger LOG = LoggerFactory.getLogger(JobAwareSlotManagerStrategy.class);
 
-	private final SlotManagementWorker worker;
+	private final Map<JobID, SlotManagementWorker> slotManagers;
+	private final Map<InstanceID, JobID> taskManagers;
+
 	private final ScheduledExecutor scheduledExecutor;
 
 	/** Timeout for slot requests to the task manager. */
@@ -58,120 +61,94 @@ public class SimpleSlotManagerStrategy implements SlotManagerStrategy {
 
 	private ScheduledFuture<?> slotRequestTimeoutCheck;
 
-	private boolean started;
+	private boolean started = false;
 
-	SimpleSlotManagerStrategy(ScheduledExecutor scheduledExecutor,
-							  Time taskManagerRequestTimeout,
-							  Time slotRequestTimeout,
-							  Time taskManagerTimeout) {
-		this.taskManagerRequestTimeout = Preconditions.checkNotNull(taskManagerRequestTimeout);
-		this.slotRequestTimeout = Preconditions.checkNotNull(slotRequestTimeout);
-		this.taskManagerTimeout = Preconditions.checkNotNull(taskManagerTimeout);
-		this.scheduledExecutor = Preconditions.checkNotNull(scheduledExecutor);
+	public JobAwareSlotManagerStrategy(
+		ScheduledExecutor scheduledExecutor,
+		Time taskManagerRequestTimeout,
+		Time slotRequestTimeout,
+		Time taskManagerTimeout) {
 
-		this.worker = new SlotManagementWorker(
-			taskManagerTimeout,
-			taskManagerRequestTimeout,
-			slotRequestTimeout);
+		this.scheduledExecutor = scheduledExecutor;
+		this.taskManagerRequestTimeout = taskManagerRequestTimeout;
+		this.slotRequestTimeout = slotRequestTimeout;
+		this.taskManagerTimeout = taskManagerTimeout;
+
+		this.slotManagers = new HashMap<>(16);
+		this.taskManagers = new HashMap<>(16);
 	}
+
 
 	@Override
 	public int getNumberRegisteredSlots() {
-		return worker.getNumberRegisteredSlots();
+		return slotManagers.values()
+			.stream()
+			.map(SlotManagementWorker::getNumberRegisteredSlots)
+			.reduce((left, right) -> left + right)
+			.orElse(0);
 	}
 
 	@Override
 	public int getNumberRegisteredSlotsOf(InstanceID instanceID) {
-		return worker.getNumberRegisteredSlotsOf(instanceID);
+		return Optional.ofNullable(taskManagers.get(instanceID))
+			.flatMap(jobId -> Optional.ofNullable(slotManagers.get(jobId)))
+			.map(manager -> manager.getNumberRegisteredSlotsOf(instanceID))
+			.orElse(-1);
 	}
 
 	@Override
 	public int getNumberFreeSlots() {
-		return worker.getNumberFreeSlots();
+		return slotManagers.values()
+			.stream()
+			.map(SlotManagementWorker::getNumberFreeSlots)
+			.reduce((left, right) -> left + right)
+			.orElse(0);
 	}
 
 	@Override
 	public int getNumberFreeSlotsOf(InstanceID instanceID) {
-		return worker.getNumberFreeSlotsOf(instanceID);
+		return Optional.ofNullable(taskManagers.get(instanceID))
+			.flatMap(jobId -> Optional.ofNullable(slotManagers.get(jobId)))
+			.map(manager -> manager.getNumberFreeSlotsOf(instanceID))
+			.orElse(-1);
 	}
 
 	@Override
 	public void start(ResourceManagerId newResourceManagerId, Executor newMainThreadExecutor, ResourceActions newResourceActions) {
-		LOG.info("Starting the SlotManager.");
-		this.mainThreadExecutor = newMainThreadExecutor;
-
-		taskManagerTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
-			() -> mainThreadExecutor.execute(
-				() -> checkTaskManagerTimeouts()),
-			0L,
-			taskManagerTimeout.toMilliseconds(),
-			TimeUnit.MILLISECONDS);
-
-		slotRequestTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
-			() -> mainThreadExecutor.execute(
-				() -> checkSlotRequestTimeouts()),
-			0L,
-			slotRequestTimeout.toMilliseconds(),
-			TimeUnit.MILLISECONDS);
-
-		worker.start(newResourceManagerId, newMainThreadExecutor, newResourceActions);
-		started = true;
 	}
 
 	@Override
 	public void suspend() {
-		LOG.info("Suspending the SlotManager.");
 
-		// stop the timeout checks for the TaskManagers and the SlotRequests
-		if (taskManagerTimeoutCheck != null) {
-			taskManagerTimeoutCheck.cancel(false);
-			taskManagerTimeoutCheck = null;
-		}
-
-		if (slotRequestTimeoutCheck != null) {
-			slotRequestTimeoutCheck.cancel(false);
-			slotRequestTimeoutCheck = null;
-		}
-
-		worker.suspend();
-		started = false;
 	}
 
 	@Override
 	public boolean registerSlotRequest(SlotRequest slotRequest) throws SlotManagerException {
-		return worker.registerSlotRequest(slotRequest);
+		return false;
 	}
 
 	@Override
 	public boolean unregisterSlotRequest(AllocationID allocationId) {
-		return worker.unregisterSlotRequest(allocationId);
+		return false;
 	}
 
 	@Override
 	public void registerTaskManager(TaskExecutorConnection taskExecutorConnection, SlotReport initialSlotReport) {
-		worker.registerTaskManager(taskExecutorConnection, initialSlotReport);
+
 	}
 
 	@Override
 	public boolean unregisterTaskManager(InstanceID instanceId) {
-		return worker.unregisterTaskManager(instanceId);
+		return false;
 	}
 
 	@Override
 	public boolean reportSlotStatus(InstanceID instanceId, SlotReport slotReport) {
-		return worker.reportSlotStatus(instanceId, slotReport);
+		return false;
 	}
 
 	@Override
 	public void freeSlot(SlotID slotId, AllocationID allocationId) {
-		worker.freeSlot(slotId, allocationId);
-	}
 
-	private void checkTaskManagerTimeouts() {
-		worker.checkTaskManagerTimeouts();
-	}
-
-	private void checkSlotRequestTimeouts() {
-		worker.checkSlotRequestTimeouts();
 	}
 }
