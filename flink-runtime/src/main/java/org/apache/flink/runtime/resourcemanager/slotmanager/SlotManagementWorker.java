@@ -154,6 +154,12 @@ class SlotManagementWorker implements AutoCloseable {
 		}
 	}
 
+	public boolean hasPendingRequests() {
+		return pendingSlotRequests.values()
+			.stream()
+			.anyMatch(r -> !r.isAssigned());
+	}
+
 	// ---------------------------------------------------------------------------------------------
 	// Component lifecycle methods
 	// ---------------------------------------------------------------------------------------------
