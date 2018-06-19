@@ -35,14 +35,17 @@ public class SlotManagerConfiguration {
 	private final Time taskManagerRequestTimeout;
 	private final Time slotRequestTimeout;
 	private final Time taskManagerTimeout;
+	private final boolean jobIsolationEnabled;
 
 	public SlotManagerConfiguration(
 			Time taskManagerRequestTimeout,
 			Time slotRequestTimeout,
-			Time taskManagerTimeout) {
+			Time taskManagerTimeout,
+			boolean jobIsolationEnabled) {
 		this.taskManagerRequestTimeout = Preconditions.checkNotNull(taskManagerRequestTimeout);
 		this.slotRequestTimeout = Preconditions.checkNotNull(slotRequestTimeout);
 		this.taskManagerTimeout = Preconditions.checkNotNull(taskManagerTimeout);
+		this.jobIsolationEnabled = jobIsolationEnabled;
 	}
 
 	public Time getTaskManagerRequestTimeout() {
@@ -55,6 +58,10 @@ public class SlotManagerConfiguration {
 
 	public Time getTaskManagerTimeout() {
 		return taskManagerTimeout;
+	}
+
+	public boolean isJobIsolationEnabled() {
+		return jobIsolationEnabled;
 	}
 
 	public static SlotManagerConfiguration fromConfiguration(Configuration configuration) throws ConfigurationException {
@@ -73,6 +80,10 @@ public class SlotManagerConfiguration {
 		final Time taskManagerTimeout = Time.milliseconds(
 				configuration.getLong(ResourceManagerOptions.TASK_MANAGER_TIMEOUT));
 
-		return new SlotManagerConfiguration(rpcTimeout, slotRequestTimeout, taskManagerTimeout);
+		final boolean jobIsolationEnabled = configuration.getBoolean
+			("slotmanager.job-isolation-enabled",
+				false);
+		return new SlotManagerConfiguration(rpcTimeout, slotRequestTimeout, taskManagerTimeout,
+			jobIsolationEnabled);
 	}
 }

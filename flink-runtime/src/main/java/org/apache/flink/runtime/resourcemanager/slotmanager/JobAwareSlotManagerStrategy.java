@@ -255,19 +255,56 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 	@Override
 	public boolean reportSlotStatus(InstanceID instanceId, SlotReport slotReport) {
-		return false;
+		JobID jobID = taskManagers.get(instanceId);
+		if (jobID == null) {
+			LOG.warn("Instance {} not registered when reporting status: {}", instanceId, slotReport);
+			return false;
+		}
+
+		SlotManagementWorker managementWorker = slotManagers.get(jobID);
+		if (managementWorker == null) {
+			LOG.warn("Can't find management worker for job id: {}", jobID);
+			return false;
+		}
+
+		return managementWorker.reportSlotStatus(instanceId, slotReport);
 	}
 
 	@Override
 	public void freeSlot(SlotID slotId, AllocationID allocationId) {
+		JobID jobID = slotRequests.get(allocationId);
+		if (jobID == null) {
+			LOG.warn("Can't find allocation id: {}", allocationId);
+			return;
+		}
 
+		SlotManagementWorker manager = slotManagers.get(jobID);
+		if (manager == null) {
+			LOG.warn("Can't find slot manager for job id: {}", jobID);
+			return;
+		}
+
+		manager.freeSlot(slotId, allocationId);
 	}
 
 	private void checkTaskManagerTimeouts() {
+		for (Map.Entry<JobID, SlotManagementWorker> entry: slotManagers.entrySet()) {
+			try {
+				entry.getValue().checkTaskManagerTimeouts();
+			} catch (Exception e) {
+				LOG.error("Failed to check task manager timeouts for job: {}", entry.getKey());
+			}
+		}
 	}
 
 	private void checkSlotRequestTimeouts() {
-
+		for (Map.Entry<JobID, SlotManagementWorker> entry: slotManagers.entrySet()) {
+			try {
+				entry.getValue().checkSlotRequestTimeouts();
+			} catch (Exception e) {
+				LOG.error("Failed to check slot requests timeouts for job: {}", entry.getKey());
+			}
+		}
 	}
 
 	private SlotManagementWorker createAndStartSlotManager(JobID jobID) {

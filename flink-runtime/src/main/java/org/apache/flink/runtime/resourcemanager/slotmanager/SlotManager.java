@@ -54,15 +54,31 @@ public class SlotManager implements AutoCloseable {
 		Time taskManagerRequestTimeout,
 		Time slotRequestTimeout,
 		Time taskManagerTimeout) {
-
-		this.strategy = new SimpleSlotManagerStrategy(
-			scheduledExecutor,
-			taskManagerRequestTimeout,
-			slotRequestTimeout,
-			taskManagerTimeout);
+		this(scheduledExecutor, taskManagerRequestTimeout, slotRequestTimeout,
+			taskManagerTimeout, false);
 	}
 
+	public SlotManager(
+		ScheduledExecutor scheduledExecutor,
+		Time taskManagerRequestTimeout,
+		Time slotRequestTimeout,
+		Time taskManagerTimeout,
+		boolean isJobIsolationEnabled) {
 
+		if (isJobIsolationEnabled) {
+			this.strategy = new JobAwareSlotManagerStrategy(
+				scheduledExecutor,
+				taskManagerRequestTimeout,
+				slotRequestTimeout,
+				taskManagerTimeout);
+		} else {
+			this.strategy = new SimpleSlotManagerStrategy(
+				scheduledExecutor,
+				taskManagerRequestTimeout,
+				slotRequestTimeout,
+				taskManagerTimeout);
+		}
+	}
 
 	public int getNumberRegisteredSlots() {
 		return strategy.getNumberRegisteredSlots();

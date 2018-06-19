@@ -73,7 +73,8 @@ public class ResourceManagerHATest extends TestLogger {
 			new SlotManagerConfiguration(
 				TestingUtils.infiniteTime(),
 				TestingUtils.infiniteTime(),
-				TestingUtils.infiniteTime()));
+				TestingUtils.infiniteTime(),
+				false));
 		ResourceManagerRuntimeServices resourceManagerRuntimeServices = ResourceManagerRuntimeServices.fromConfiguration(
 			resourceManagerRuntimeServicesConfiguration,
 			highAvailabilityServices,
