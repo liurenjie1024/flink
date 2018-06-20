@@ -39,7 +39,6 @@ import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.StreamSupport;
 
 public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 	private static final Logger LOG = LoggerFactory.getLogger(JobAwareSlotManagerStrategy.class);
