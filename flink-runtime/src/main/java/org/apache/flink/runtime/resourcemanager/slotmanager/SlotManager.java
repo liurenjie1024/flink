@@ -93,7 +93,7 @@ public class SlotManager implements AutoCloseable {
 	}
 
 	public int getNumberFreeSlotsOf(InstanceID instanceId) {
-		return strategy.getNumberRegisteredSlotsOf(instanceId);
+		return strategy.getNumberFreeSlotsOf(instanceId);
 	}
 
 	// ---------------------------------------------------------------------------------------------
