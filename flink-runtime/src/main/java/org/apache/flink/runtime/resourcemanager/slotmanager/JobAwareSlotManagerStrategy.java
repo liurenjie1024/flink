@@ -43,22 +43,31 @@ import java.util.concurrent.TimeUnit;
 public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 	private static final Logger LOG = LoggerFactory.getLogger(JobAwareSlotManagerStrategy.class);
 
+	//TODO: Figure out a way to clean dismissed jobs
 	private final Map<JobID, SlotManagementWorker> slotManagers;
 	private final Map<InstanceID, JobID> taskManagers;
 	private final Map<AllocationID, JobID> slotRequests;
 
 	private final ScheduledExecutor scheduledExecutor;
 
-	/** Timeout for slot requests to the task manager. */
+	/**
+	 * Timeout for slot requests to the task manager.
+	 */
 	private final Time taskManagerRequestTimeout;
 
-	/** Timeout after which an allocation is discarded. */
+	/**
+	 * Timeout after which an allocation is discarded.
+	 */
 	private final Time slotRequestTimeout;
 
-	/** Timeout after which an unused TaskManager is released. */
+	/**
+	 * Timeout after which an unused TaskManager is released.
+	 */
 	private final Time taskManagerTimeout;
 
-	/** Executor for future callbacks which have to be "synchronized". */
+	/**
+	 * Executor for future callbacks which have to be "synchronized".
+	 */
 	private Executor mainThreadExecutor;
 
 	private ScheduledFuture<?> taskManagerTimeoutCheck;
@@ -67,6 +76,9 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 	private ResourceManagerId resourceManagerId;
 	private ResourceActions resourceActions;
+
+	// This manager is for those task manager who can't find a job, we should optimize
+	private SlotManagementWorker idleSlotManager;
 
 	private boolean started = false;
 
@@ -89,11 +101,17 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 	@Override
 	public int getNumberRegisteredSlots() {
-		return slotManagers.values()
+		int jobSlots = slotManagers.values()
 			.stream()
 			.map(SlotManagementWorker::getNumberRegisteredSlots)
 			.reduce((left, right) -> left + right)
 			.orElse(0);
+
+		if (idleSlotManager != null) {
+			return jobSlots + idleSlotManager.getNumberRegisteredSlots();
+		} else {
+			return jobSlots;
+		}
 	}
 
 	@Override
@@ -101,16 +119,22 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 		return Optional.ofNullable(taskManagers.get(instanceID))
 			.flatMap(jobId -> Optional.ofNullable(slotManagers.get(jobId)))
 			.map(manager -> manager.getNumberRegisteredSlotsOf(instanceID))
-			.orElse(-1);
+			.orElseGet(() -> Optional.ofNullable(idleSlotManager)
+				.map(s -> s.getNumberRegisteredSlotsOf(instanceID))
+				.orElse(-1));
 	}
 
 	@Override
 	public int getNumberFreeSlots() {
-		return slotManagers.values()
+		int jobFreeSlots = slotManagers.values()
 			.stream()
 			.map(SlotManagementWorker::getNumberFreeSlots)
 			.reduce((left, right) -> left + right)
 			.orElse(0);
+
+		return Optional.ofNullable(idleSlotManager)
+			.map(SlotManagementWorker::getNumberFreeSlots)
+			.orElse(0) + jobFreeSlots;
 	}
 
 	@Override
@@ -118,17 +142,20 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 		return Optional.ofNullable(taskManagers.get(instanceID))
 			.flatMap(jobId -> Optional.ofNullable(slotManagers.get(jobId)))
 			.map(manager -> manager.getNumberFreeSlotsOf(instanceID))
-			.orElse(-1);
+			.orElseGet(() -> Optional.ofNullable(idleSlotManager)
+				.map(s -> s.getNumberFreeSlotsOf(instanceID))
+				.orElse(-1));
 	}
 
 	@Override
 	public void start(ResourceManagerId newResourceManagerId,
 					  Executor newMainThreadExecutor,
 					  ResourceActions newResourceActions) {
-		LOG.info("Starting slot manager");
+		LOG.info("Starting  job aware slot manager");
 		this.mainThreadExecutor = newMainThreadExecutor;
 		this.resourceManagerId = newResourceManagerId;
 		this.resourceActions = newResourceActions;
+		this.idleSlotManager = createAndStartSlotManager();
 
 		taskManagerTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
 			() -> mainThreadExecutor.execute(
@@ -166,6 +193,11 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 			.stream()
 			.forEach(SlotManagementWorker::suspend);
 
+		if (idleSlotManager != null) {
+			idleSlotManager.suspend();
+		}
+
+		this.idleSlotManager = null;
 		this.mainThreadExecutor = null;
 		this.resourceActions = null;
 		this.resourceManagerId = null;
@@ -210,7 +242,7 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 		// If any slot is assigned to a job, then call register of that job
 		JobID jobID = null;
-		for(SlotStatus status : initialSlotReport) {
+		for (SlotStatus status : initialSlotReport) {
 			if (status.getJobID() != null) {
 				jobID = status.getJobID();
 				break;
@@ -229,20 +261,27 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 		}
 
 		// If no slot manager found, we assgin this task manager to the first
-		for(Map.Entry<JobID, SlotManagementWorker> entry: slotManagers.entrySet()) {
+		for (Map.Entry<JobID, SlotManagementWorker> entry : slotManagers.entrySet()) {
 			if (entry.getValue().hasPendingRequests()) {
 				LOG.info("Task manager {} assigned to job {}.",
 					taskExecutorConnection.getResourceID(), entry.getKey());
 				taskManagers.put(taskExecutorConnection.getInstanceID(), entry.getKey());
 				entry.getValue().registerTaskManager(taskExecutorConnection, initialSlotReport);
-				break;
+				return;
 			}
 		}
+
+		// If no job need this, insert it into idle slot manager.
+		idleSlotManager.registerTaskManager(taskExecutorConnection, initialSlotReport);
 	}
 
 	@Override
 	public boolean unregisterTaskManager(InstanceID instanceId) {
 		try {
+			if ((idleSlotManager != null) && idleSlotManager.unregisterTaskManager(instanceId)) {
+				return true;
+			}
+
 			return Optional.ofNullable(taskManagers.get(instanceId))
 				.flatMap(jobID -> Optional.ofNullable(slotManagers.get(jobID)))
 				.map(s -> s.unregisterTaskManager(instanceId))
@@ -254,6 +293,10 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 	@Override
 	public boolean reportSlotStatus(InstanceID instanceId, SlotReport slotReport) {
+		if ((idleSlotManager != null) && idleSlotManager.reportSlotStatus(instanceId, slotReport)) {
+			return true;
+		}
+
 		JobID jobID = taskManagers.get(instanceId);
 		if (jobID == null) {
 			LOG.warn("Instance {} not registered when reporting status: {}", instanceId, slotReport);
@@ -271,6 +314,8 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 
 	@Override
 	public void freeSlot(SlotID slotId, AllocationID allocationId) {
+		idleSlotManager.freeSlot(slotId, allocationId);
+
 		JobID jobID = slotRequests.get(allocationId);
 		if (jobID == null) {
 			LOG.warn("Can't find allocation id: {}", allocationId);
@@ -287,31 +332,52 @@ public class JobAwareSlotManagerStrategy implements SlotManagerStrategy {
 	}
 
 	private void checkTaskManagerTimeouts() {
-		for (Map.Entry<JobID, SlotManagementWorker> entry: slotManagers.entrySet()) {
+		for (Map.Entry<JobID, SlotManagementWorker> entry : slotManagers.entrySet()) {
 			try {
 				entry.getValue().checkTaskManagerTimeouts();
 			} catch (Exception e) {
 				LOG.error("Failed to check task manager timeouts for job: {}", entry.getKey());
 			}
 		}
+
+		if (idleSlotManager != null) {
+			try {
+				idleSlotManager.checkTaskManagerTimeouts();
+			} catch (Exception e) {
+				LOG.error("Failed to check task manager idle slot manager");
+			}
+		}
 	}
 
 	private void checkSlotRequestTimeouts() {
-		for (Map.Entry<JobID, SlotManagementWorker> entry: slotManagers.entrySet()) {
+		for (Map.Entry<JobID, SlotManagementWorker> entry : slotManagers.entrySet()) {
 			try {
 				entry.getValue().checkSlotRequestTimeouts();
 			} catch (Exception e) {
 				LOG.error("Failed to check slot requests timeouts for job: {}", entry.getKey());
 			}
 		}
+
+		if (idleSlotManager != null) {
+			try {
+				idleSlotManager.checkSlotRequestTimeouts();
+			} catch (Exception e) {
+				LOG.error("Failed to check slot requests timeouts idle slot manager.");
+			}
+		}
 	}
 
 	private SlotManagementWorker createAndStartSlotManager(JobID jobID) {
+		SlotManagementWorker worker = createAndStartSlotManager();
+		slotManagers.put(jobID, worker);
+		return worker;
+	}
+
+	private SlotManagementWorker createAndStartSlotManager() {
 		SlotManagementWorker slotManager = new SlotManagementWorker(
 			taskManagerTimeout,
 			taskManagerRequestTimeout,
 			slotRequestTimeout);
-		slotManagers.put(jobID, slotManager);
 		slotManager.start(resourceManagerId, mainThreadExecutor, resourceActions);
 
 		return slotManager;
